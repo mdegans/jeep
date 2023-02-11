@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::frame::state::Valid;
+
 use super::{Display, Frame, ParseError};
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -41,10 +43,10 @@ impl Odometer {
     }
 }
 
-impl TryFrom<Frame> for Odometer {
+impl TryFrom<Frame<Valid>> for Odometer {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected `frame.id` for this event.
         const ID: u32 = 0x3d2;
         // the expected frame length
@@ -58,7 +60,7 @@ impl TryFrom<Frame> for Odometer {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }

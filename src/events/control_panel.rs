@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::frame::state::Valid;
+
 use super::{Display, Frame, From, ParseError};
 
 /// An Event from the main [`ControlPanel`] below the head unit.
@@ -43,11 +45,11 @@ pub enum ControlPanel {
     // a different ID or are some unused bits in the above flags is unknown.
 }
 
-impl TryFrom<Frame> for ControlPanel {
+impl TryFrom<Frame<Valid>> for ControlPanel {
     type Error = ParseError;
 
     /// Try to parse a [`ControlPanel`] event from a [`Frame`].
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         match frame.id() {
             0x2d3 => Ok(ControlPanel::Buttons(frame.try_into()?)),
             0x2d4 => Ok(ControlPanel::Warmers(frame.try_into()?)),
@@ -80,11 +82,11 @@ bitflags::bitflags! {
     }
 }
 
-impl TryFrom<Frame> for Buttons {
+impl TryFrom<Frame<Valid>> for Buttons {
     type Error = ParseError;
 
     /// Convert from a [`Frame`] to a [`Buttons`] button press.
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected `frame.id` for this event.
         const ID: u32 = 0x2d3;
         // the expected frame length
@@ -98,7 +100,7 @@ impl TryFrom<Frame> for Buttons {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }
@@ -126,11 +128,11 @@ bitflags::bitflags! {
     }
 }
 
-impl TryFrom<Frame> for Warmers {
+impl TryFrom<Frame<Valid>> for Warmers {
     type Error = ParseError;
 
     /// Convert from a [`Frame`] to a [`Warmers`] button press.
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected `frame.id` for this event.
         const ID: u32 = 0x2d4;
         // the expected frame length
@@ -144,7 +146,7 @@ impl TryFrom<Frame> for Warmers {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }
@@ -170,11 +172,11 @@ pub enum Knobs {
     FanUp,
 }
 
-impl TryFrom<Frame> for Knobs {
+impl TryFrom<Frame<Valid>> for Knobs {
     type Error = ParseError;
 
     /// Convert from a [`Frame`] to a [`Knobs`] event.
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected `frame.id` for this event.
         const ID: u32 = 0x273;
         // the expected frame length
@@ -188,7 +190,7 @@ impl TryFrom<Frame> for Knobs {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }

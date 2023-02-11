@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 use super::{Display, ParseError};
-use crate::frame::Frame;
+use crate::frame::{state::Valid, Frame};
 
 /// The 12v (starter) battery under the hood that powers the "Aux" stuff.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -51,10 +51,10 @@ impl std::fmt::Display for Aux {
     }
 }
 
-impl TryFrom<Frame> for Aux {
+impl TryFrom<Frame<Valid>> for Aux {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected `frame.id` for this event.
         const ID: u32 = 0x2c2;
         // the expected frame length
@@ -85,10 +85,10 @@ pub enum Battery {
     Aux(Aux),
 }
 
-impl TryFrom<Frame> for Battery {
+impl TryFrom<Frame<Valid>> for Battery {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         match frame.id() {
             0x2c2 => Ok(Battery::Aux(frame.try_into()?)),
             // 4xE big battery goes here

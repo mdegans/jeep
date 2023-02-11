@@ -88,7 +88,10 @@
 use derive_more::{Display, From};
 use static_assertions as sa;
 
-use crate::Frame;
+use crate::{
+    frame::state::{LenTooBig, Valid},
+    Frame,
+};
 
 mod parse_error;
 pub use parse_error::ParseError;
@@ -222,11 +225,11 @@ impl<T> Iterator for IntoIter<T> {
     }
 }
 
-impl TryFrom<Frame> for OneOrMany<Event> {
+impl TryFrom<Frame<Valid>> for OneOrMany<Event> {
     type Error = ParseError;
 
     /// Parse a CAN frame into [`OneOrMany<Event>`]
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         match frame.id() {
             0x2c2 => Ok(One(Event::Battery(frame.try_into()?))),
             0x1c0 => Ok(One(Event::Remote(frame.try_into()?))),
@@ -257,7 +260,7 @@ impl TryFrom<Frame> for OneOrMany<Event> {
                     Ok(data) => data,
                     Err(_) => {
                         return Err(ParseError::Len {
-                            frame,
+                            frame: frame.into(),
                             expected: LEN,
                         })
                     }
@@ -321,23 +324,38 @@ impl TryFrom<Frame> for OneOrMany<Event> {
     }
 }
 
+/// Input failed to convert and parse into a valid [`Event`]
+#[derive(derive_more::Error, Display, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Error<FrameConversionError>
+where
+    FrameConversionError: std::error::Error,
+{
+    /// A [`Frame`] Could not be constructed from input. This may or may not
+    /// include the original frame depending on the input.
+    ConversionError(FrameConversionError),
+    /// A [`Frame`] could not be parsed into an [`Event`].
+    ParseError(ParseError),
+}
+
 #[cfg(feature = "socketcan")]
 impl TryFrom<socketcan::CANFrame> for OneOrMany<Event> {
-    type Error = CanFrameError;
+    type Error = Error<LenTooBig>;
 
     fn try_from(frame: socketcan::CANFrame) -> Result<Self, Self::Error> {
-        let frame = Frame::from_socketcan(frame)?;
-        // ? is not working here :/  It should because a `From` impl exists
-        frame.try_into().map_err(|pe| CanFrameError::ParseError(pe))
+        let frame =
+            Frame::from_socketcan(frame).map_err(Error::ConversionError)?;
+        frame.try_into().map_err(Error::ParseError)
     }
 }
 
 impl TryFrom<libc::can_frame> for OneOrMany<Event> {
-    type Error = CanFrameError;
+    type Error = Error<Frame<LenTooBig>>;
 
     fn try_from(frame: libc::can_frame) -> Result<Self, Self::Error> {
-        let frame = Frame::from_libc_can_frame(frame)?;
-        frame.try_into().map_err(|pe| CanFrameError::ParseError(pe))
+        let frame = Frame::from_libc_can_frame(frame)
+            .map_err(Error::ConversionError)?;
+        frame.try_into().map_err(Error::ParseError)
     }
 }
 
@@ -349,16 +367,4 @@ impl TryFrom<libc::can_frame> for OneOrMany<Event> {
 pub enum FrontOrRear<T> {
     Front(T),
     Rear(T),
-}
-
-/// Everything that can go wrong converting a CAN frame to [`OneOrMany<Event>`]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(
-    Debug, derive_more::Error, derive_more::From, derive_more::Display,
-)]
-pub enum CanFrameError {
-    /// Len (`can_d) > 8. Constructing a [`Frame`] from this data would likely result in UB.
-    BadLen(crate::frame::BadLen),
-    /// Input could be converted into a [`Frame`] but something about it did not parse.
-    ParseError(ParseError),
 }

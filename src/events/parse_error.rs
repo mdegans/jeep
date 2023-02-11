@@ -20,7 +20,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::frame::Frame;
+use crate::frame::{
+    state::{LenUnexpected, Valid},
+    Frame,
+};
 
 /// When an [`Event`](super::Event) fails to parse from a [`Frame`]. It is
 /// convertible back into a [`Frame`] using [`ParseError::into()`].
@@ -30,33 +33,22 @@ pub enum ParseError {
     /// [`Frame`] ID was unrecognized.
     Id {
         /// The frame with the unrecognized ID.
-        frame: Frame,
+        frame: Frame<Valid>,
     },
     /// [`Frame`]'s len (`can_dlc`) was not the expected length from the ID.
     Len {
         /// The frame that failed to parse.
-        frame: Frame,
+        frame: Frame<LenUnexpected>,
         /// The expected length for this id.
         expected: usize,
     },
     /// Invalid data in [`Frame`] with detail.
     Data {
         /// The frame that failed to parse or None if it was unsafe to construct a Frame.
-        frame: Frame,
+        frame: Frame<Valid>,
         /// Why the frame failed to parse (too big, too small, etc...)
         detail: String,
     },
-}
-
-impl Into<Frame> for ParseError {
-    /// Convert a [`ParseError`] back into the [`Frame`] that failed to parse.
-    fn into(self) -> Frame {
-        match self {
-            ParseError::Id { frame }
-            | ParseError::Len { frame, .. }
-            | ParseError::Data { frame, .. } => frame,
-        }
-    }
 }
 
 impl std::fmt::Display for ParseError {

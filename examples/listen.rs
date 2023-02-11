@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 use clap::Parser;
-use jeep::listener::{Error, Listener, Message};
+use jeep::listener::{Listener, Message};
 use serde::{Deserialize, Serialize};
 
 use std::{
@@ -81,27 +81,10 @@ where
             timestamp,
             payload: event,
         })?,
-        Err(err) => match err {
-            Error::ParseError(err) => {
-                serde_json::to_string(&TimestampedPayload {
-                    timestamp,
-                    payload: err,
-                })?
-            }
-            Error::IoError(err) => {
-                serde_json::to_string(&TimestampedPayload {
-                    timestamp,
-                    // std::io::Error has no Serialize, so we just write it as
-                    // string in the payload for now.
-                    payload: format!("{err}"),
-                })?
-            }
-            // we migth want to panic here?
-            Error::BadLen(err) => serde_json::to_string(&TimestampedPayload {
-                timestamp,
-                payload: err,
-            })?,
-        },
+        Err(err) => serde_json::to_string(&TimestampedPayload {
+            timestamp,
+            payload: err,
+        })?,
     };
 
     writeln!(writer, "{json}")?;

@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::frame::state::Valid;
+
 use super::{Display, Frame, ParseError};
 
 bitflags::bitflags! {
@@ -86,10 +88,10 @@ impl Buttons {
     }
 }
 
-impl TryFrom<Frame> for Buttons {
+impl TryFrom<Frame<Valid>> for Buttons {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected `frame.id` for this event.
         const ID: u32 = 0x318;
         // the expected frame length
@@ -103,7 +105,7 @@ impl TryFrom<Frame> for Buttons {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }

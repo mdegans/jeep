@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 use super::{Display, ParseError};
-use crate::frame::Frame;
+use crate::frame::{state::Valid, Frame};
 
 /// A [`Camera`] related event. This is guaranteed to have the same
 /// representation as the byte at index 1 of a frame from id `0x302`.
@@ -35,7 +35,7 @@ pub enum Camera {
     Cargo = 0x09,
 }
 
-impl TryFrom<Frame> for Camera {
+impl TryFrom<Frame<Valid>> for Camera {
     type Error = ParseError;
 
     /// Try to convert from a [`Frame`] from id `0x0302` into a [`Camera`]
@@ -44,7 +44,7 @@ impl TryFrom<Frame> for Camera {
     /// # Panics
     /// In debug configurations if `frame.id() != 0x302`, since this indicates
     /// a programmer error, likely in `Event`.
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected `frame.id` for this event.
         const ID: u32 = 0x302;
         // the expected frame length
@@ -58,7 +58,7 @@ impl TryFrom<Frame> for Camera {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }

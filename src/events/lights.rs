@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::frame::state::Valid;
+
 use super::{Display, Frame, ParseError};
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -38,10 +40,10 @@ impl ParkingLights {
     }
 }
 
-impl TryFrom<Frame> for ParkingLights {
+impl TryFrom<Frame<Valid>> for ParkingLights {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected `frame.id` for this event.
         const ID: u32 = 0x2fa;
         // the expected frame length
@@ -55,7 +57,7 @@ impl TryFrom<Frame> for ParkingLights {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }
@@ -101,10 +103,10 @@ impl Dimmer {
     }
 }
 
-impl TryFrom<Frame> for Dimmer {
+impl TryFrom<Frame<Valid>> for Dimmer {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected `frame.id` for this event.
         const ID: u32 = 0x2fa;
         // the expected frame length
@@ -118,7 +120,7 @@ impl TryFrom<Frame> for Dimmer {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }

@@ -24,6 +24,10 @@
 
 use static_assertions as sa;
 
+use std::marker::PhantomData;
+
+use self::state::{DataSafe, LenTooBig, LenUnexpected, Raw, Valid};
+
 // Some compile time sanity checks to ensure socketcan and can_frame haven't
 // changed somehow. These should probably never break.
 sa::const_assert_eq!(std::mem::size_of::<libc::can_frame>(), 16);
@@ -31,10 +35,12 @@ sa::const_assert_eq!(std::mem::size_of::<libc::can_frame>(), 16);
 sa::assert_eq_size!(libc::can_frame, socketcan::CANFrame);
 // note: socketcan alignment is not the same, however the field order and size
 // still is.
-sa::assert_eq_size!(libc::can_frame, Frame);
-sa::assert_eq_align!(libc::can_frame, Frame);
+sa::assert_eq_size!(libc::can_frame, Frame<Valid>);
+sa::assert_eq_size!(libc::can_frame, Frame<LenTooBig>);
+sa::assert_eq_size!(libc::can_frame, Frame<Raw>);
 sa::assert_eq_size!(libc::can_frame, CanFrameWrapper);
 sa::assert_eq_align!(libc::can_frame, CanFrameWrapper);
+const DATA_MAX_LEN: usize = 8;
 
 /// A [`Frame`] is a wrapper for a [`libc::can_frame`] struct.
 ///
@@ -44,38 +50,105 @@ sa::assert_eq_align!(libc::can_frame, CanFrameWrapper);
 #[repr(transparent)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone)]
-pub struct Frame(
+pub struct Frame<State> {
     #[cfg_attr(feature = "serde", serde(with = "CanFrameWrapper"))]
-    libc::can_frame,
-);
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    can_frame: libc::can_frame,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    state: PhantomData<State>,
+}
 
-impl Frame {
-    const ID_MASK: u32 = 0x7FF;
-    const DATA_LEN: usize = 8;
+/// Represents the state of a Frame as zero sized types. I read about this in
+/// Rust for Rustacians. We're "abusing" (brilliantly) the type system here to
+/// tag structs with zero sized states so an object can be in one state or
+/// another, but not both -- although Frame is so generic, so it could even
+/// be a combination of zsts
+///
+/// This is basically an enum, but the tag is really zero sized. And the
+/// *really* cool thing you can do is with implementations for individual
+/// states. So, I'm using this for validation and making my impl into a state
+/// machine.
+pub mod state {
+    /// Represents a raw, unparsed, state. All constructors be here which can
+    /// progress onto either a Validated or some failure state.
+    pub struct Raw;
+
+    /// Represents a valid state for a CAN Frame. Validation has happened after
+    /// any mutation.
+    #[derive(Clone)]
+    pub struct Valid;
+    /// Represents an invalid frame data len (`can_dlc > 8`).
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[derive(derive_more::Display, Debug, derive_more::Error)]
+    #[display = "Len (`can_dlc`) was > 8"]
+    pub struct LenTooBig;
+
+    /// Represents an unexpected frame length for a given CAN Id.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[derive(derive_more::Display, Debug, derive_more::Error)]
+    #[display = "Len of CAN Frame was unexpected for it's source ID."]
+    pub struct LenUnexpected;
+
+    /// Marks states where it's safe to access `.data()`. Otherwise using the
+    /// data accessor would be unsafe.
+    pub trait DataSafe {}
+    /// It is safe to access `data()` when the state is `Valid` and `validate()`
+    /// has returned a [`Frame<Valid>`].
+    ///
+    /// [Frame<Valid>]: super::Frame<Valid>
+    impl DataSafe for Valid {}
+    /// It is safe to access `data()` when the len is unexpected, since it's
+    /// still validated to be < 8.
+    impl DataSafe for LenUnexpected {}
+}
+
+/// A [`Raw`] frame only construction methods. One can become either a Valid
+/// or one of various invalid frames depending on what goes wrong.
+impl Frame<Raw> {
+    /// Create a new, zeroed out Self.
+    const fn zeroed() -> Self {
+        // SAFETY: there is no "safe" way to construct a libc::can_frame with
+        // private fields, and zeroing out a struct is the proper way to do so.
+        // std::mem::zeroed() is not const (yet), but we can use transmute.
+        // Transmute is safe because zeroes transmuted into a libc::can_frame is
+        // valid for it's type.
+        unsafe {
+            std::mem::transmute([0u8; std::mem::size_of::<libc::can_frame>()])
+        }
+    }
 
     /// Helper function to validate that a [`Frame`] is validly constructed.
     /// **All constructors must call this!** (in order to maintain class
-    /// invariant 1, which avoids a panic). serde deserialization calls
-    const fn validate(self) -> Result<Self, BadLen> {
+    /// invariant 1, which avoids a panic). Serde deserialization calls
+    ///
+    const fn validate(self) -> Result<Frame<Valid>, Frame<LenTooBig>> {
+        let Self {
+            can_frame: frame, ..
+        } = self;
         // Ensure len does not exceed the maximum len of data.
-        if self.0.can_dlc <= Self::DATA_LEN as u8 {
-            Ok(self)
+        if frame.can_dlc <= DATA_MAX_LEN as u8 {
+            Ok(Frame {
+                can_frame: frame,
+                state: PhantomData,
+            })
         } else {
-            Err(BadLen)
+            Err(Frame {
+                can_frame: frame,
+                state: PhantomData,
+            })
         }
     }
 
     /// Create a new [`Frame`] from a [`libc::can_frame`].
     #[inline(always)] // because trivial
     pub const fn from_libc_can_frame(
-        frame: libc::can_frame,
-    ) -> Result<Self, BadLen> {
-        Self(frame).validate()
-    }
-
-    #[inline(always)] // because trivial
-    pub const fn into_libc_can_frame(self) -> libc::can_frame {
-        self.0
+        can_frame: libc::can_frame,
+    ) -> Result<Frame<Valid>, Frame<LenTooBig>> {
+        Frame {
+            can_frame,
+            state: PhantomData,
+        }
+        .validate()
     }
 
     /// Create a new frame from id (with flags), data, and len.
@@ -83,30 +156,24 @@ impl Frame {
         id_flags: u32,
         data: [u8; 8],
         len: u8,
-    ) -> Result<Self, BadLen> {
-        // SAFETY: there is no "safe" way to construct a libc::can_frame with
-        // private fields, and zeroing out a struct is the proper way to do so.
-        // std::mem::zeroed() is not const (yet), but we can use transmute.
-        // Transmute is safe because zeroes transmuted into a libc::can_frame is
-        // valid for it's type.
-        let mut inner: libc::can_frame = unsafe {
-            std::mem::transmute([0u8; std::mem::size_of::<libc::can_frame>()])
-        };
+    ) -> Result<Frame<Valid>, Frame<LenTooBig>> {
+        let mut frame = Frame::zeroed();
 
-        inner.can_id = id_flags;
-        inner.can_dlc = len;
-        inner.data = data;
+        frame.can_frame.can_id = id_flags;
+        frame.can_frame.can_dlc = len;
+        frame.can_frame.data = data;
 
-        Self(inner).validate()
+        frame.validate()
     }
 
     /// Create a new frame from id_flags and a data slice.
     pub const fn from_id_slice(
         id_flags: u32,
         slice: &[u8],
-    ) -> Result<Self, BadLen> {
+    ) -> Result<Frame<Valid>, LenTooBig> {
         if slice.len() > 8 {
-            return Err(BadLen);
+            // we can't possibly make frame data from the slice, so we just
+            return Err(LenTooBig);
         }
 
         let len: u8 = slice.len() as u8;
@@ -118,21 +185,73 @@ impl Frame {
             i += 1
         }
 
-        Self::from_id_data_len(id_flags, data, len)
+        match Self::from_id_data_len(id_flags, data, len) {
+            Ok(frame) => Ok(frame),
+            Err(_) => Err(LenTooBig),
+        }
     }
 
     /// Create a new [`Frame`] from a [`socketcan::CANFrame`].
-    #[inline(always)] // because single function call
+    #[inline] // because single function call
     #[cfg(feature = "socketcan")]
-    pub fn from_socketcan(frame: socketcan::CANFrame) -> Result<Self, BadLen> {
+    pub fn from_socketcan(
+        frame: socketcan::CANFrame,
+    ) -> Result<Frame<Valid>, LenTooBig> {
         // TODO(mdegans): looks like socketcan's "master" branch is also wrapping
         // a libc::can_frame, so in the future we can probably bypass this constructor
         // and just check the len.
         Self::from_id_slice(frame.id(), frame.data())
     }
+}
+
+impl<State> Frame<State>
+where
+    State: DataSafe,
+{
+    /// CAN frame's data as slice.
+    #[inline] // because trivial accessor (in release)
+    pub const fn data(&self) -> &[u8] {
+        // SAFETY: Class invariant 1 guarantees Len is valid, and the dcheck
+        // below will check that in debug builds.
+        debug_assert!(
+                self.can_frame.can_dlc <= DATA_MAX_LEN as u8,
+                "Class invariant 1 violated. `can_dlc` (the `len`) is > Self::DATA_LEN"
+            );
+        unsafe {
+            core::slice::from_raw_parts(
+                &self.can_frame.data as *const u8,
+                self.can_frame.can_dlc as usize,
+            )
+        }
+    }
+}
+
+impl<State> Frame<State> {
+    const ID_MASK: u32 = 0x7FF;
+
+    /// The Id (masked by [`Frame::ID_MASK`]) from which the Frame was sent.
+    #[inline] // because trivial accessor
+    pub const fn id(&self) -> u32 {
+        self.raw_id() & Self::ID_MASK
+    }
+
+    /// The raw `can_id` of the [`can_frame`]
+    ///
+    /// [`can_frame`]: libc::can_frame
+    #[inline] // because trivial accessor
+    pub const fn raw_id(&self) -> u32 {
+        self.can_frame.can_id
+    }
+}
+
+impl Frame<Valid> {
+    #[inline] // because trivial
+    pub const fn into_libc_can_frame(self) -> libc::can_frame {
+        self.can_frame
+    }
 
     /// Convert into a [`socketcan::CANFrame`]
-    #[inline(always)] // because single function call
+    #[inline] // because single function call
     #[cfg(feature = "socketcan")]
     pub fn into_socketcan(
         self,
@@ -141,58 +260,28 @@ impl Frame {
         // a libc::can_frame, so in the future we can probably bypass this constructor.
         socketcan::CANFrame::new(self.id(), self.data(), false, false)
     }
-
-    /// The Id from which the Frame was sent.
-    #[inline(always)] // because trivial accessor
-    pub const fn id(&self) -> u32 {
-        self.0.can_id & Self::ID_MASK
-    }
-
-    #[inline(always)] // because trivial accessor
-    pub const fn data_len(&self) -> usize {
-        // casting SAFETY: it's alwasy safe to upcast a u8 to any usize
-        self.0.can_dlc as usize
-    }
-
-    /// CAN frame's data as slice.
-    #[inline(always)] // because trivial accessor (in release)
-    pub const fn data(&self) -> &[u8] {
-        // SAFETY: Class invariant 1 guarantees Len is valid, and the dcheck below
-        // will check that in debug builds. This code is covered by tests. This code is
-        // no less safe than indexing with [] in release builds.
-        debug_assert!(
-            self.data_len() <= Self::DATA_LEN,
-            "Class invariant 1 violated. Len is > Self::DATA_LEN"
-        );
-        unsafe {
-            core::slice::from_raw_parts(
-                &self.0.data as *const u8,
-                self.data_len(),
-            )
-        }
-    }
 }
 
-impl core::hash::Hash for Frame {
+impl core::hash::Hash for Frame<Valid> {
     /// This implementation of hash ignores any padding to avoid, for example,
     /// "duplicate" frames in a collection that differ.
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.can_id.hash(state);
-        self.0.can_dlc.hash(state);
+        self.can_frame.can_id.hash(state);
+        self.can_frame.can_dlc.hash(state);
         self.data().hash(state);
     }
 }
 
-impl PartialEq for Frame {
+impl PartialEq for Frame<Valid> {
     fn eq(&self, other: &Self) -> bool {
-        self.0.can_id == other.0.can_id
-            && self.0.can_dlc == other.0.can_dlc
+        self.can_frame.can_id == other.can_frame.can_id
+            && self.can_frame.can_dlc == other.can_frame.can_dlc
             && self.data() == other.data()
     }
 }
 
 #[cfg(feature = "embedded-can")]
-impl embedded_can::Frame for Frame {
+impl embedded_can::Frame for Frame<Valid> {
     fn new(id: impl Into<embedded_can::Id>, data: &[u8]) -> Option<Self> {
         let id: embedded_can::Id = id.into();
         match id {
@@ -229,7 +318,7 @@ impl embedded_can::Frame for Frame {
     }
 
     fn dlc(&self) -> usize {
-        self.0.can_dlc.into()
+        self.can_frame.can_dlc.into()
     }
 
     fn data(&self) -> &[u8] {
@@ -237,26 +326,47 @@ impl embedded_can::Frame for Frame {
     }
 }
 
-impl std::fmt::Debug for Frame {
+impl std::fmt::Debug for Frame<LenTooBig> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, stringify!(Frame<LenInvalid>))
+    }
+}
+
+impl std::fmt::Display for Frame<LenTooBig> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <Self as std::fmt::Debug>::fmt(&self, f)
+    }
+}
+
+impl std::error::Error for Frame<LenTooBig> {}
+
+impl<State> std::fmt::Debug for Frame<State>
+where
+    State: DataSafe,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // we're "lying" here, but it's prettier.
         f.debug_struct(stringify!(CanFrame))
-            .field("can_id", &self.0.can_id)
-            .field("can_dlc", &self.0.can_dlc)
-            .field("data", &self.0.data)
+            .field("id", &self.id())
+            .field("data", &self.data())
             .finish()
     }
 }
 
-impl std::fmt::Display for Frame {
+impl<State> std::fmt::Display for Frame<State>
+where
+    State: DataSafe,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:3X}#{:X?}", self.id(), self.data())
     }
 }
 
 #[cfg(feature = "socketcan")]
-impl TryFrom<socketcan::CANFrame> for Frame {
-    type Error = BadLen;
+impl TryFrom<socketcan::CANFrame> for Frame<Valid> {
+    type Error = LenTooBig;
 
     #[inline(always)] // because single function call
     fn try_from(frame: socketcan::CANFrame) -> Result<Self, Self::Error> {
@@ -285,7 +395,7 @@ where
     if len <= MAX {
         Ok(len)
     } else {
-        Err(serde::de::Error::custom(BadLen))
+        Err(serde::de::Error::custom(LenTooBig))
     }
 }
 
@@ -350,11 +460,16 @@ impl From<CanFrameWrapper> for libc::can_frame {
     }
 }
 
-/// Invalid CAN frame len (`can_dlc`). It would be unsafe to construct a [`Frame`].
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(derive_more::Display, Debug, derive_more::Error)]
-#[display = "Len (`can_dlc`) was > 8"]
-pub struct BadLen;
+impl From<Frame<Valid>> for Frame<LenUnexpected> {
+    /// Asserts that this type's length is invalid. It's not possible to
+    /// convert the other direction.
+    fn from(frame: Frame<Valid>) -> Self {
+        Self {
+            can_frame: frame.can_frame,
+            state: PhantomData,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -402,6 +517,8 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_frame_serde_json() {
+        use crate::frame::state::Valid;
+
         let expected =
             Frame::from_id_data_len(1, [2, 3, 4, 5, 6, 7, 8, 9], 8).unwrap();
         let json = serde_json::to_string(&expected).unwrap();
@@ -409,19 +526,19 @@ mod tests {
             &json,
             "{\"can_id\":1,\"can_dlc\":8,\"data\":[2,3,4,5,6,7,8,9]}"
         );
-        let actual: Frame = serde_json::from_str(&json).unwrap();
+        let actual: Frame<Valid> = serde_json::from_str(&json).unwrap();
         assert_eq!(actual, expected);
 
         // Ensure class invariant 1 is upheld even with deserialization of bad len
         const BAD_LEN: &str =
             "{\"can_id\":1,\"can_dlc\":9,\"data\":[2,3,4,5,6,7,8,9]}";
-        let err = serde_json::from_str::<Frame>(BAD_LEN).unwrap_err();
-        assert_eq!(err.to_string(), "BadLen at line 1 column 23");
+        let err = serde_json::from_str::<Frame<Valid>>(BAD_LEN).unwrap_err();
+        assert_eq!(err.to_string(), "LenTooBig at line 1 column 49");
 
         // Data being too long should also fail.
         const BAD_DATA: &str =
             "{\"can_id\":1,\"can_dlc\":8,\"data\":[2,3,4,5,6,7,8,9,10]}";
-        let err = serde_json::from_str::<Frame>(BAD_DATA).unwrap_err();
-        assert_eq!(err.to_string(), "trailing characters at line 1 column 49");
+        let err = serde_json::from_str::<Frame<Valid>>(BAD_DATA).unwrap_err();
+        assert_eq!(err.to_string(), "invalid length 9, expected 8 elements in sequence at line 1 column 52");
     }
 }

@@ -20,15 +20,17 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::frame::state::Valid;
+
 use super::{Frame, ParseError};
 
 /// [`chrono::NaiveDateTime`] is used for [`DateTime`] rather than writing it from scratch.
 pub use chrono::NaiveDateTime as DateTime;
 
-impl TryFrom<Frame> for DateTime {
+impl TryFrom<Frame<Valid>> for DateTime {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected `frame.id` for this event.
         const ID: u32 = 0x350;
         // the expected frame length
@@ -42,7 +44,7 @@ impl TryFrom<Frame> for DateTime {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }
@@ -55,7 +57,7 @@ impl TryFrom<Frame> for DateTime {
         let month = data[5];
         let day = data[6];
 
-        let date = chrono::NaiveDate::from_ymd_opt(
+        let datetime = chrono::NaiveDate::from_ymd_opt(
             year.into(),
             month.into(),
             day.into(),
@@ -63,13 +65,12 @@ impl TryFrom<Frame> for DateTime {
         .ok_or_else(|| ParseError::Data {
             frame: frame.clone(),
             detail: "invalid date".to_owned(),
+        })?
+        .and_hms_opt(hours.into(), minutes.into(), seconds.into())
+        .ok_or_else(|| ParseError::Data {
+            frame,
+            detail: "invalid time".to_owned(),
         })?;
-        let datetime = date
-            .and_hms_opt(hours.into(), minutes.into(), seconds.into())
-            .ok_or_else(|| ParseError::Data {
-                frame: frame.clone(),
-                detail: "invalid time".to_owned(),
-            })?;
 
         Ok(datetime)
     }

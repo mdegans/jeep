@@ -27,29 +27,19 @@ use derive_more::{Display, Error as DeriveError, From};
 use socketcan::CANSocket;
 
 use crate::{
-    events::{CanFrameError, Event, OneOrMany, ParseError},
-    frame::BadLen,
+    events::{self, Event, OneOrMany},
+    frame::state::LenTooBig,
 };
 use OneOrMany::{Many, One};
 
 /// An [`Error`] can be either an [`std::io::Error`] or a [`ParseError`]
 #[derive(Debug, Display, DeriveError, From)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Error {
-    /// A [`crate::Frame`] was received, but parsing failed.
-    ParseError(ParseError),
-    /// A [`std::io::Error`] (other than [`std::io::ErrorKind::WouldBlock`])
+    #[cfg_attr(feature = "serde", serde(skip))]
     IoError(std::io::Error),
-    /// Invalid CAN frame len (`can_dlc`). This should really never happen unless the kernel or [`socketcan`] is broken.
-    BadLen(BadLen),
-}
-
-impl From<CanFrameError> for Error {
-    fn from(value: CanFrameError) -> Self {
-        match value {
-            CanFrameError::BadLen(bl) => Error::BadLen(bl),
-            CanFrameError::ParseError(pe) => Error::ParseError(pe),
-        }
-    }
+    /// Something went wrong converting input into a [`Frame`]
+    InvalidInput(events::Error<LenTooBig>),
 }
 
 /// A [`Message`] is just a [`Result`] type produced by [`Listener`]'s methods.
@@ -103,7 +93,7 @@ impl<'a> Iterator for Messages<'a> {
                 // returns None for any err, but then there's no way to tell the
                 // difference between IOError and WouldBlock, and some IO errors
                 // might be recoverable if the socket is still open.
-                _ => Some(Err(Error::from(err))),
+                _ => Some(Err(err.into())),
             },
         }
     }

@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 use super::{Display, ParseError};
-use crate::frame::Frame;
+use crate::frame::{state::Valid, Frame};
 
 /// Cause of a [`Bus::Wake`]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -42,10 +42,10 @@ pub enum Bus {
     Wake(Wake),
 }
 
-impl TryFrom<Frame> for Bus {
+impl TryFrom<Frame<Valid>> for Bus {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         const ID: u32 = 0x401;
         const LEN: usize = 8;
 
@@ -57,7 +57,7 @@ impl TryFrom<Frame> for Bus {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }
@@ -70,12 +70,12 @@ impl TryFrom<Frame> for Bus {
             [0x0c, 0x06] => Ok(Bus::Wake(Wake::HoodOpen)),
             [0x0c, 0x07] => Ok(Bus::Wake(Wake::HoodClose)),
             _ => Err(ParseError::Data {
-                frame: frame.clone(),
                 detail: format!(
                     "Unrecognized {} data in frame: {}",
                     stringify!(Bus),
                     &frame
                 ),
+                frame,
             }),
         }
     }

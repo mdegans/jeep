@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::frame::state::Valid;
+
 use super::{
     Display, Event, Frame, OneOrMany,
     OneOrMany::{Many, One},
@@ -59,14 +61,17 @@ impl std::fmt::Display for MPH {
     }
 }
 
-impl TryFrom<Frame> for MPH {
+impl TryFrom<Frame<Valid>> for MPH {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         if let Some(&value) = frame.data().get(7) {
             Ok(Self(value.into()))
         } else {
-            Err(ParseError::Len { frame, expected: 8 })
+            Err(ParseError::Len {
+                frame: frame.into(),
+                expected: 8,
+            })
         }
     }
 }
@@ -145,10 +150,10 @@ pub enum Engine {
     MPH(MPH),
 }
 
-impl TryFrom<Frame> for OneOrMany<Engine> {
+impl TryFrom<Frame<Valid>> for OneOrMany<Engine> {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         match frame.id() {
             0x340 => Ok(One(Engine::MPH(MPH::try_from(frame)?))),
             0x322 => {
@@ -162,7 +167,7 @@ impl TryFrom<Frame> for OneOrMany<Engine> {
                     // frame does not match the expected length
                     Err(_) => {
                         return Err(ParseError::Len {
-                            frame,
+                            frame: frame.into(),
                             expected: LEN,
                         })
                     }

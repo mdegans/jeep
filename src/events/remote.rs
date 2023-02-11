@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::frame::state::Valid;
+
 use super::{Display, Frame, ParseError};
 
 /// Source of a [`Remote`] event (app, keyfob).
@@ -76,11 +78,11 @@ pub enum Remote {
     PanicFrom(RemoteSource),
 }
 
-impl TryFrom<Frame> for Remote {
+impl TryFrom<Frame<Valid>> for Remote {
     type Error = ParseError;
 
     /// Try to convert a [`Frame`] into a [`Remote`] event.
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         use RemoteSource::{App, KeyFob};
 
         // the expected `frame.id` for this event.
@@ -96,7 +98,7 @@ impl TryFrom<Frame> for Remote {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }

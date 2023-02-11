@@ -20,16 +20,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::frame::state::Valid;
+
 use super::{Display, Frame, Front, FrontOrRear, ParseError, Rear};
 
 /// Road feedback from axle sensors.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(PartialEq, Debug, Clone)]
 pub struct RoadFeedback([u8; 8]);
-impl TryFrom<Frame> for FrontOrRear<RoadFeedback> {
+impl TryFrom<Frame<Valid>> for FrontOrRear<RoadFeedback> {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         // the expected frame length
         const LEN: usize = 8;
 
@@ -37,7 +39,7 @@ impl TryFrom<Frame> for FrontOrRear<RoadFeedback> {
             Ok(data) => data,
             Err(_) => {
                 return Err(ParseError::Len {
-                    frame,
+                    frame: frame.into(),
                     expected: LEN,
                 })
             }
@@ -66,10 +68,10 @@ pub enum Force {
     RoadFeedback(FrontOrRear<RoadFeedback>),
 }
 
-impl TryFrom<Frame> for Force {
+impl TryFrom<Frame<Valid>> for Force {
     type Error = ParseError;
 
-    fn try_from(frame: Frame) -> Result<Self, Self::Error> {
+    fn try_from(frame: Frame<Valid>) -> Result<Self, Self::Error> {
         match frame.id() {
             0x24e | 0x252 => Ok(Force::RoadFeedback(frame.try_into()?)),
             _ => Err(ParseError::Id { frame }),
